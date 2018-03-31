@@ -11,7 +11,7 @@ class LilMoHouseBot:
 
     def __init__(self,):
 
-        # Open config and grab the token
+        # Open config and grab the json file
         with open('config.json') as json_data_file:
             data = json.load(json_data_file)
 
@@ -21,6 +21,13 @@ class LilMoHouseBot:
 
         # starterbot's user ID in Slack: value is assigned after the bot starts up
         self.starterbot_id = None
+
+        # Set up structures for tracking renters, renters paid, and renters not paid. Grabbing renters from config.
+        self.renters = data["Users"]
+
+        self.renters_paid = {}
+
+        self.renters_not_paid = {}
 
 
         # constants
@@ -38,28 +45,26 @@ class LilMoHouseBot:
         """
         for event in slack_events:
             if event["type"] == "message" and not "subtype" in event:
-                user_id, message = parse_direct_mention(event["text"])
-                if user_id == starterbot_id:
+                user_id, message = self.parse_direct_mention(event["text"])
+                if user_id == self.starterbot_id:
                     return message, event["channel"]
         return None, None
-
 
     def parse_direct_mention(self, message_text):
         """
             Finds a direct mention (a mention that is at the beginning) in message text
             and returns the user ID which was mentioned. If there is no direct mention, returns None
         """
-        matches = re.search(MENTION_REGEX, message_text)
+        matches = re.search(self.mention_regex, message_text)
         # the first group contains the username, the second group contains the remaining message
         return (matches.group(1), matches.group(2).strip()) if matches else (None, None)
-
 
     def handle_command(self, command, channel):
         """
             Executes bot command if the command is known
         """
         # Default response is help text for the user
-        default_response = "Not sure what you mean. Try *{}*.".format(COMMAND_KEYWORD)
+        default_response = "Not sure what you mean. Try *{}*.".format(self.command_keyword)
 
         # Finds and executes the given command, filling in response
         response = None
@@ -75,15 +80,17 @@ class LilMoHouseBot:
         if self.slack_client.rtm_connect(with_team_state=False):
             print("Starter Bot connected and running!")
             # Read bot's user ID by calling Web API method `auth.test`
-            starterbot_id = slack_client.api_call("auth.test")["user_id"]
+            self.starterbot_id = self.slack_client.api_call("auth.test")["user_id"]
             while True:
-                command, channel = parse_bot_commands(slack_client.rtm_read())
+                command, channel = self.parse_bot_commands(self.slack_client.rtm_read())
                 if command:
-                    handle_command(command, channel)
-                time.sleep(RTM_READ_DELAY)
+                    self.handle_command(command, channel)
+                time.sleep(self.rtm_read_delay)
         else:
             print("Connection failed. Exception traceback printed above.")
 
+
 if __name__ == "__main__":
-    pass
+    bot = LilMoHouseBot()
+    bot.run()
 
