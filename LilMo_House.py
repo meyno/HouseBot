@@ -2,9 +2,11 @@
 """
 
 import time
+import datetime
 import re
 from slackclient import SlackClient
 import json
+import calendar
 
 
 class LilMoHouseBot:
@@ -76,6 +78,26 @@ class LilMoHouseBot:
             text=response or default_response
         )
 
+    def send_rent_reminder(self, channel, rent_due_date):
+        """ Handles rent reminders for each month. Reminds once a week before rent due (end of the month),
+        reminds a second time four days before rent due, and finally three times the day before, five times
+        day off and six times a day after.... Listen... I know it's a lot.. but people just don't pay rent...
+
+        :param channel: Channel to post reminders to
+        :param rent_due_date: Set the day of the month rent will be due
+        :return:
+        """
+
+        self.__check_time()
+
+    def __check_datetime(self):
+
+        # Get last day of the month from today's date.
+        today = datetime.datetime.today()
+        first_day_of_month, last_day_of_month = calendar.monthrange(today.year, today.month)
+
+
+
     def run(self):
         if self.slack_client.rtm_connect(with_team_state=False):
             print("Starter Bot connected and running!")
@@ -85,6 +107,7 @@ class LilMoHouseBot:
                 command, channel = self.parse_bot_commands(self.slack_client.rtm_read())
                 if command:
                     self.handle_command(command, channel)
+                # self.send_rent_reminder()
                 time.sleep(self.rtm_read_delay)
         else:
             print("Connection failed. Exception traceback printed above.")
