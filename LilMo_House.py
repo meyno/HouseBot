@@ -13,41 +13,38 @@ class LilMoHouseBot:
 
     def __init__(self,):
 
+        # TODO: 1. Create a time tracking object that takes in rent due date and calculates all the needed relative times to interface with the Bot object class.
+        # TODO: 2. Save state when using shutdown cmd and allow to open last state when starting up.
+        # TODO: 3. Scrape web for chores/parking spot each monday/and with call cmd.
+        # TODO: 4. Track stats on how pays rent the fasts with a rent_stats cmd.
+        # TODO: 5. Allow for a list of Admins.
+        # TODO: 6. Use onion style architecture to allow cmds to be imported via driver. Would need big overhaul...
+
         # Open config and grab the json file
         with open('config.json') as json_data_file:
             data = json.load(json_data_file)
 
-        # instantiate Slack client
+        # Instantiate Slack client
         slack_bot_token = data['SlackBotToken']
         self.slack_client = SlackClient(slack_bot_token)
+
+        # Grab slack channels for bot to post to
+        self.list_of_channels = data["channels"]
+
+        # Grab the channel admin
+        self.bot_admin = data["admin"]
 
         # starterbot's user ID in Slack: value is assigned after the bot starts up
         self.starterbot_id = None
 
         # Set up structures for tracking renters, renters paid, and renters not paid. Grabbing renters from config.
-        self.renters = data["Users"]
-
+        self.renters = data["users"]
         self.renters_paid = {}
-
         self.renters_not_paid = {}
 
-        # Setting this low to reset in functions
-        self.last_day_of_relative_month = datetime.datetime(year=1900, month=1,
-                                                            day=1)
-
-        one_day = datetime.timedelta(days=1)
-        self.first_day_of_next_month = self.last_day_of_relative_month + one_day
-
-        # Set ping flags
-        self.seven_days_ping = False
-        self.four_days_ping = False
-        self.one_days_ping = False
-        self.nine_day_of_ping = False
-        self.twelve_day_of_ping = False
-        self.five_day_of_ping = False
-        self.ten_day_of_ping = False
-
-        self.__reset_emergency_pings()
+        # Set all our relative times and ping flags for this month
+        self.__reset_relative_times_and_pings()
+        self.__reset_emergency_times_and_pings()
 
         # constants
         self.rtm_read_delay = 1 # 1 second delay between reading from RTM
@@ -55,6 +52,15 @@ class LilMoHouseBot:
         self.input_keyword = '-in'
         self.help_keyword = '-help'
         self.mention_regex = "^<@(|[WU].+?)>(.*)"
+
+        # cmd list
+        self.command_list = ['paid', 'not_paid', 'show_paid', 'show_not_paid']
+
+        # INIT PRINTS
+
+        print(self.renters)
+        print(self.renters_paid)
+        print(self.renters_not_paid)
 
     def parse_bot_commands(self, slack_events):
         """
@@ -66,8 +72,8 @@ class LilMoHouseBot:
             if event["type"] == "message" and not "subtype" in event:
                 user_id, message = self.parse_direct_mention(event["text"])
                 if user_id == self.starterbot_id:
-                    return message, event["channel"]
-        return None, None
+                    return message, event["channel"], event["user"]
+        return None, None, None
 
     def parse_direct_mention(self, message_text):
         """
@@ -78,7 +84,7 @@ class LilMoHouseBot:
         # the first group contains the username, the second group contains the remaining message
         return (matches.group(1), matches.group(2).strip()) if matches else (None, None)
 
-    def handle_command(self, command, channel):
+    def handle_command(self, command, channel, user):
         """
             Executes bot command if the command is known
         """
@@ -88,8 +94,26 @@ class LilMoHouseBot:
         # Finds and executes the given command, filling in response
         response = None
 
-        if command.startswith(self.command_keyword + ' remove'):
-            response = 'Removing xxx'
+        if command.startswith(self.command_keyword + ' paid'):
+            if self.__check_if_admin(user):
+                response = self.__cmd_remove_renter_from_renters_not_paid(command)
+            else:
+                response = 'Admin cmd only... sorry.'
+
+        if command.startswith(self.command_keyword + ' not_paid'):
+            if self.__check_if_admin(user):
+                response = self.__cmd_add_renter_to_renters_not_paid(command)
+            else:
+                response = 'Admin cmd only... sorry.'
+
+        if command.startswith(self.command_keyword + ' show_paid'):
+            response = self.__cmd_show_renters_paid()
+
+        if command.startswith(self.command_keyword + ' show_not_paid'):
+            response = self.__cmd_show_renters_not_paid()
+
+        if command == self.help_keyword:
+            response = f"Here's a list of commands {self.command_list}"
 
         # Sends the response back to the channel
         self.slack_client.api_call(
@@ -98,32 +122,7 @@ class LilMoHouseBot:
             text=response or default_response
         )
 
-    def send_rent_reminder(self, channel, rent_due_date):
-        """ Handles rent reminders for each month. Reminds once a week before rent due (end of the month),
-        reminds a second time four days before rent due, and finally three times the day before, five times
-        day off and six times a day after.... Listen... I know it's a lot.. but people just don't pay rent...
-
-        :param channel: Channel to post reminders to
-        :param rent_due_date: Set the day of the month rent will be due
-        :return:
-        """
-
-        relative_datetime = self.__check_datetime()
-
-        if relative_datetime == 7:
-            __send_reminder
-
-        if relative_datetime == 4:
-            __send_reminder
-
-        if relative_datetime == #First date of the month:
-            __reset_renters_not_paid
-
-
-
-        # If 1 week out send a reminder to all members of self.renters_not_paid.
-
-    def send_rent_reminder(self, channel,):
+    def rent_reminder(self, channel,):
         """ Handles rent reminders for each month. Reminds once a week before rent due (end of the month),
         reminds a second time four days before rent due, and finally three times the day before, five times
         day off and six times a day after.... Listen... I know it's a lot.. but people just don't pay rent...
@@ -140,103 +139,110 @@ class LilMoHouseBot:
 
         # If everyone has paid and we're in a new month, reset all our relative vars and renters not paid.
         if not self.renters_not_paid and right_now > self.first_day_of_next_month:
-            # Get last day of the month from today's date.
-            relative_day = datetime.datetime.today()
-            x , last_day_of_month_int = calendar.monthrange(relative_day.year, relative_day.month)
-
-            self.last_day_of_relative_month = datetime.datetime(year=relative_day.year, month=relative_day.month, day=last_day_of_month_int)
-
-            # Set relative datetime checks
-            seven_days = datetime.timedelta(days=6,hours=7) # 5 oclock seven days
-            four_days = datetime.timedelta(days=3,hours=7)  # 5 oclock three days
-
-            seven_hours = datetime.timedelta(hours=7)
-
-            nine_hours = datetime.timedelta(hours=9)
-            twelve_hours = datetime.timedelta(hours=12)               # 12pm oclock
-            seventeen_hours = datetime.timedelta(hours=17)            # 5pm oclock
-            twenty_two_hours = datetime.timedelta(hours=22)           # 10pm oclock
-
-            # One Day
-            one_day = datetime.timedelta(days=1)
-
-            # Set first day of next month
-            self.first_day_of_next_month = self.last_day_of_relative_month + one_day
-
-            # Reset renters not paid
-            self.__reset_renters_not_paid()
+            self.__reset_relative_times_and_pings()
 
         # Check if ping within the set window and check if it has pinged already for the window
-        # Seven day window
-        if right_now > (self.last_day_of_relative_month - seven_days) < (self.last_day_of_relative_month - four_days) and not self.seven_days_ping:
-
-            message = 'Rent due in seven days!'
-            self.__send_reminder(channel=channel, reminder_message=message)
-            self.seven_days_ping = True
-
-        # Four day window
-        if right_now > (self.last_day_of_relative_month - four_days) < (self.last_day_of_relative_month - seven_hours) and not self.four_days_ping:
-            message = 'Rent due in four days!'
-            self.__send_reminder(channel=channel, reminder_message=message)
-            self.four_days_ping = True
-
-        # Day before window
-        if right_now > (self.last_day_of_relative_month - seven_hours) < (self.last_day_of_relative_month + nine_hours) and not self.one_days_ping:
-            message = 'Rent due tomorrow!'
-            self.__send_reminder(channel=channel, reminder_message=message)
-            self.one_days_ping = True
-
-        # Day of 9am ping
-        if right_now > (self.last_day_of_relative_month + nine_hours) < (self.last_day_of_relative_month + twelve_hours) and not self.nine_day_of_ping:
-            message = 'Rent due today!'
-            self.__send_reminder(channel=channel, reminder_message=message)
-            self.nine_day_of_ping = True
-
-        # Day of 12pm ping
-        if right_now > (self.last_day_of_relative_month + twelve_hours) < (self.last_day_of_relative_month + seventeen_hours) and not self.twelve_day_of_ping:
-            message = 'Rent due today plzzz!'
-            self.__send_reminder(channel=channel, reminder_message=message)
-            self.twelve_day_of_ping = True
-
-        # Day of 5pm ping
-        if right_now > (self.last_day_of_relative_month + seventeen_hours) < (self.last_day_of_relative_month + twenty_two_hours) and not self.five_day_of_ping:
-            message = 'R3nt duee rn!'
-            self.__send_reminder(channel=channel, reminder_message=message)
-            self.five_day_of_ping = True
-
-        # Day of 10pm ping
-        if right_now > (self.last_day_of_relative_month + twenty_two_hours) and not self.ten_day_of_ping:
-            message = 'Okay.. seriously pay rent!'
-            self.__send_reminder(channel=channel, reminder_message=message)
-            self.ten_day_of_ping = True
-
+        self.__check_to_send_message(right_now, channel)
 
         # If not everyone has paid and we're in a new month, uh oh! We need to ping them a bunch every day till they pay
         if self.renters_not_paid and right_now > self.first_day_of_next_month:
 
-            # if we're in a new day, reset pings and relative times!
+            # If we're in a new day, reset emergency pings and relative times!
             if right_now > self.end_of_relative_today:
-                self.__reset_emergency_pings()
+                self.__reset_emergency_times_and_pings()
 
-            # If
-            if right_now.hour > self.relative_today_nine_am and not self.relative_today_nine_am_ping:
-                message = 'Rent is pass due, please pay!'
-                self.__send_reminder(channel=channel, reminder_message=message)
-                self.relative_today_nine_am_ping = True
-
-
-
-            pass
-            # Look at today's hour if today's
-            # if right_now.hour
-
-
+            # If we're still in the same day, let's check to see if we should send a reminder ping out.
+            self.__check_to_send_emergency_message()
 
         return None
 
-    def __send_reminder(self, channel, reminder_message):
-        # Check renters_not_paid0
-        # Send one message @ing all users in that dictionary
+    def __check_to_send_message(self, current_datetime, channels):
+        """ Check if ping within the set window and check if it has pinged already for the window. Send message otherwise.
+
+        :param current_datetime: The current datetime use to compare against conditions if ping should be sent.
+        :param channel: Channel to send reminder to.
+        :return: None
+        """
+
+        right_now = current_datetime
+
+        # Seven day window
+        if right_now > (self.last_day_of_relative_month - self.seven_days) < (self.last_day_of_relative_month - self.four_days) and not self.seven_days_ping:
+
+            message = 'Rent due in seven days!'
+            self.__send_reminder(channel_list=channels, reminder_message=message)
+            self.seven_days_ping = True
+
+        # Four day window
+        if right_now > (self.last_day_of_relative_month - self.four_days) < (self.last_day_of_relative_month - self.seven_hours) and not self.four_days_ping:
+            message = 'Rent due in four days!'
+            self.__send_reminder(channel_list=channels, reminder_message=message)
+            self.four_days_ping = True
+
+        # Day before window
+        if right_now > (self.last_day_of_relative_month - self.seven_hours) < (self.last_day_of_relative_month + self.nine_hours) and not self.one_days_ping:
+            message = 'Rent due tomorrow!'
+            self.__send_reminder(channel_list=channels, reminder_message=message)
+            self.one_days_ping = True
+
+        # Day of 9am ping
+        if right_now > (self.last_day_of_relative_month + self.nine_hours) < (self.last_day_of_relative_month + self.twelve_hours) and not self.nine_day_of_ping:
+            message = 'Rent due today!'
+            self.__send_reminder(channel_list=channels, reminder_message=message)
+            self.nine_day_of_ping = True
+
+        # Day of 12pm ping
+        if right_now > (self.last_day_of_relative_month + self.twelve_hours) < (self.last_day_of_relative_month + self.seventeen_hours) and not self.twelve_day_of_ping:
+            message = 'Rent due today plzzz!'
+            self.__send_reminder(channel_list=channels, reminder_message=message)
+            self.twelve_day_of_ping = True
+
+        # Day of 5pm ping
+        if right_now > (self.last_day_of_relative_month + self.seventeen_hours) < (self.last_day_of_relative_month + self.twenty_two_hours) and not self.five_day_of_ping:
+            message = 'R3nt duee rn!'
+            self.__send_reminder(channel_list=channels, reminder_message=message)
+            self.five_day_of_ping = True
+
+        # Day of 10pm ping
+        if right_now > (self.last_day_of_relative_month + self.twenty_two_hours) and not self.ten_day_of_ping:
+            message = 'Okay.. seriously pay rent!'
+            self.__send_reminder(channel_list=channels, reminder_message=message)
+            self.ten_day_of_ping = True
+
+        return None
+
+    def __check_to_send_emergency_message(self, current_datetime, channels):
+
+        right_now = current_datetime
+
+        if right_now.hour > self.relative_today_nine_am and not self.relative_today_nine_am_ping:
+            message = 'Rent is pass due, please pay!'
+            self.__send_reminder(channel_list=channels, reminder_message=message)
+            self.relative_today_nine_am_ping = True
+
+        if right_now.hour > self.relative_today_twelve_pm and not self.relative_today_twelve_pm_ping:
+            message = 'Rent is pass due, please pay!'
+            self.__send_reminder(channel_list=channels, reminder_message=message)
+            self.relative_today_twelve_pm_ping = True
+
+        if right_now.hour > self.relative_today_five_pm and not self.relative_today_five_pm_ping:
+            message = 'Rent is pass due, please pay!'
+            self.__send_reminder(channel_list=channels, reminder_message=message)
+            self.relative_today_nine_am_ping = True
+
+        if right_now.hour > self.relative_today_ten_pm and not self.relative_today_ten_pm_ping:
+            message = 'Rent is pass due, please pay!'
+            self.__send_reminder(channel_list=channels, reminder_message=message)
+            self.relative_today_ten_pm_ping = True
+
+    def __send_reminder(self, channel_list, reminder_message):
+        """ Check renters_not_paid. Send one message @ing all users in that dictionary
+
+        :param channel_list: Channel list to send reminder to.
+        :param reminder_message: Message to include after users have been @ed
+        :return: None
+        """
+
         list_of_renters_not_paid = self.renters_not_paid.keys()
         users_with_tag = []
 
@@ -247,18 +253,42 @@ class LilMoHouseBot:
 
         users_with_reminder_message = users_with_ping + reminder_message
 
-        self.slack_client.api_call(
-            "chat.postMessage",
-            channel=channel,
-            text=users_with_reminder_message
-        )
+        # Loop through channel_list to send reminder to channels
+        for channel in channel_list:
+
+            self.slack_client.api_call(
+                "chat.postMessage",
+                channel=channel,
+                text=users_with_reminder_message
+            )
 
         print(f'Reminder sent: {users_with_reminder_message}')
         return None
 
-    def __reset_renters_not_paid(self):
-        # Reset the renters_not_paid dict by copying self.renters
-        self.renters_not_paid = self.renters.copy()
+    def __reset_relative_times_and_pings(self):
+        # Get last day of the month from today's date.
+        relative_day = datetime.datetime.today()
+        x, last_day_of_month_int = calendar.monthrange(relative_day.year, relative_day.month)
+
+        self.last_day_of_relative_month = datetime.datetime(year=relative_day.year, month=relative_day.month,
+                                                            day=last_day_of_month_int)
+
+        # Set relative datetime checks
+        self.seven_days = datetime.timedelta(days=6, hours=7)  # 5 oclock seven days
+        self.four_days = datetime.timedelta(days=3, hours=7)  # 5 oclock three days
+
+        self.seven_hours = datetime.timedelta(hours=7)
+
+        self.nine_hours = datetime.timedelta(hours=9)
+        self.twelve_hours = datetime.timedelta(hours=12)  # 12pm oclock
+        self.seventeen_hours = datetime.timedelta(hours=17)  # 5pm oclock
+        self.twenty_two_hours = datetime.timedelta(hours=22)  # 10pm oclock
+
+        # One Day
+        one_day = datetime.timedelta(days=1)
+
+        # Set first day of next month
+        self.first_day_of_next_month = self.last_day_of_relative_month + one_day
 
         # Reset standard pings
         self.seven_days_ping = False
@@ -269,10 +299,17 @@ class LilMoHouseBot:
         self.five_day_of_ping = False
         self.ten_day_of_ping = False
 
-        # Reset daily emergency pings
+        # Reset renters not paid
+        self.__reset_renters_not_paid()
+
         return None
 
-    def __reset_emergency_pings(self):
+    def __reset_renters_not_paid(self):
+        # Reset the renters_not_paid dict by copying self.renters
+        self.renters_not_paid = self.renters.copy()
+        return None
+
+    def __reset_emergency_times_and_pings(self):
         """ Resets relative times and pings for the daily four pings that will be sent to slack if someone hasn't paid
         past the due date.
         :return: None
@@ -291,11 +328,65 @@ class LilMoHouseBot:
         # ping flags
         self.relative_today_nine_am_ping = False
         self.relative_today_twelve_pm_ping = False
-        self.relative_today_five_pm = False
-        self.relative_today_ten_pm = False
+        self.relative_today_five_pm_ping = False
+        self.relative_today_ten_pm_ping = False
 
         print('emergency Pings reset')
         return None
+
+    def __check_if_admin(self, user):
+        if user == self.bot_admin:
+            return True
+        else:
+            return False
+
+    def __cmd_add_renter_to_renters_not_paid(self, command):
+        """ Adds user to the renters not paid dict
+
+        :param command: Command to be parsed
+        :return: string of the user name added
+        """
+
+        # First we need to parse the command to grab the user that is being requested to remove
+        run, not_paid, user_mentioned = command.split()
+        user_parsed = user_mentioned[2:11]  # parsing out the user tag with 2:11
+
+        # Pop and add it onto renters_paid dict
+        try:
+            self.renters_not_paid.update({user_parsed: self.renters_paid.pop(user_parsed)})
+            print(f'Removed from renters_paid : {self.renters_paid}')
+            print(f'Added to renters_not_paid : {self.renters_not_paid}')
+            return 'Renter added to renters not paid list'
+        except KeyError:
+            print('User does not exist in renters paid list')
+            return 'User does not exist in renters paid list'
+
+    def __cmd_remove_renter_from_renters_not_paid(self, command):
+        """ Removes user from the renters not paid dict
+
+        :param command: Command to be parsed
+        :return: string of the user name removed
+        """
+
+        # First we need to parse the command to grab the user that is being requested to remove
+        run, paid, user_mentioned = command.split()
+        user_parsed = user_mentioned[2:11]  # parsing out the user tag with 2:11
+
+        # Pop and add it onto renters_paid dict
+        try:
+            self.renters_paid.update({user_parsed: self.renters_not_paid.pop(user_parsed)})
+            print(f'Added to renters_paid : {self.renters_paid}')
+            print(f'Removed from renters_not_paid : {self.renters_not_paid}')
+            return 'Renter removed from renters not paid list'
+        except KeyError:
+            print('User does not exist in renters not paid list')
+            return 'User does not exist in renters_not_paid'
+
+    def __cmd_show_renters_not_paid(self):
+        return list(self.renters_not_paid.values())
+
+    def __cmd_show_renters_paid(self):
+        return list(self.renters_paid.values())
 
     def run(self):
         if self.slack_client.rtm_connect(with_team_state=False):
@@ -303,10 +394,13 @@ class LilMoHouseBot:
             # Read bot's user ID by calling Web API method `auth.test`
             self.starterbot_id = self.slack_client.api_call("auth.test")["user_id"]
             while True:
-                command, channel = self.parse_bot_commands(self.slack_client.rtm_read())
+                command, channel, user = self.parse_bot_commands(self.slack_client.rtm_read())
                 if command:
-                    self.handle_command(command, channel)
-                # self.send_rent_reminder()
+                    self.handle_command(command, channel, user)
+                    self.rent_reminder(self.list_of_channels)
+                    print(channel)
+                # self.rent_reminder()
+                print('loop complete')
                 time.sleep(self.rtm_read_delay)
         else:
             print("Connection failed. Exception traceback printed above.")
@@ -315,4 +409,5 @@ class LilMoHouseBot:
 if __name__ == "__main__":
     bot = LilMoHouseBot()
     bot.run()
+
 
