@@ -9,7 +9,7 @@ import json
 import calendar
 from bs4 import BeautifulSoup
 from selenium import webdriver
-
+import dateutil.parser
 
 class LilMoHouseBot:
 
@@ -21,6 +21,9 @@ class LilMoHouseBot:
         # TODO: 2. Track stats on who pays rent the fastest with a rent_stats cmd.
         # TODO: 4. Allow for a list of Admins.
         # TODO: 6. Use onion style architecture to allow cmds to be imported via driver. Would need big overhaul...
+
+        # Yes, we wana run.
+        self.bot_run = True
 
         # Open config and grab the json file
         with open('config.json') as json_data_file:
@@ -45,14 +48,34 @@ class LilMoHouseBot:
         # starterbot's user ID in Slack: value is assigned after the bot starts up
         self.starterbot_id = None
 
-        # Set up structures for tracking renters, renters paid, and renters not paid. Grabbing renters from config.
-        self.renters = data["users"]
-        self.renters_paid = {}
-        self.renters_not_paid = {}
+        # Set relative datetime checks
+        self.seven_days = datetime.timedelta(days=6, hours=7)  # 5 oclock seven days
+        self.four_days = datetime.timedelta(days=3, hours=7)  # 5 oclock three days
 
-        # Set all our relative times and ping flags for this month
-        self.__reset_relative_times_and_pings()
-        self.__reset_emergency_times_and_pings()
+        self.seven_hours = datetime.timedelta(hours=7)
+
+        self.nine_hours = datetime.timedelta(hours=9)
+        self.twelve_hours = datetime.timedelta(hours=12)  # 12pm oclock
+        self.seventeen_hours = datetime.timedelta(hours=17)  # 5pm oclock
+        self.twenty_two_hours = datetime.timedelta(hours=22)  # 10pm oclock
+
+        # If we have a saved_state then we'll get all our needed vars from that state.
+        if saved_state:
+            self.__read_saved_state()
+
+        # Else let's set them up
+        else:
+            # Set up structures for tracking renters, renters paid, and renters not paid. Grabbing renters from config.
+            self.renters = data["users"]
+            self.renters_paid = {}
+            self.renters_not_paid = {}
+
+            # Set all our relative times and ping flags for this month
+            self.__reset_relative_times_and_pings()
+            self.__reset_emergency_times_and_pings()
+
+
+        # TODO: Add chore tracking for state saves?
         self.__reset_chore_pings()
 
         # constants
@@ -63,7 +86,7 @@ class LilMoHouseBot:
         self.mention_regex = "^<@(|[WU].+?)>(.*)"
 
         # cmd list
-        self.command_list = ['paid', 'not_paid', 'show_paid', 'show_not_paid']
+        self.command_list = ['paid', 'not_paid', 'show_paid', 'show_not_paid', 'shutdown']
 
         # INIT PRINTS
 
@@ -112,6 +135,12 @@ class LilMoHouseBot:
         if command.startswith(self.command_keyword + ' not_paid'):
             if self.__check_if_admin(user):
                 response = self.__cmd_add_renter_to_renters_not_paid(command)
+            else:
+                response = 'Admin cmd only... sorry.'
+
+        if command.startswith(self.command_keyword + ' shutdown'):
+            if self.__check_if_admin(user):
+                response = self.__cmd_shutdown()
             else:
                 response = 'Admin cmd only... sorry.'
 
@@ -190,15 +219,7 @@ class LilMoHouseBot:
             "renters_paid": self.renters_paid,
             "renters_not_paid": self.renters_not_paid,
             "last_day_of_relative_month": self.last_day_of_relative_month,
-            # Could probably remove below
-            "seven_days":  self.seven_days,
-            "four_days": self.four_days,
-            "seven_hours": self.seven_hours,
-            "nine_hours": self.nine_hours,
-            "twelve_hours": self.twelve_hours,
-            "seventeen_hours": self.seventeen_hours,
-            "twenty_two_hours": self.twenty_two_hours,
-            # Remove above
+            # Reminder info
             "first_day_of_next_month": self.first_day_of_next_month,
             "seven_days_ping": self.seven_days_ping,
             "four_days_ping": self.four_days_ping,
@@ -227,13 +248,48 @@ class LilMoHouseBot:
         with open('StateSaves/botstate.json', 'w') as outfile:
             json.dump(state_dict, fp=outfile, indent=4, sort_keys=True, default=str)
 
-        with open('StateSaves/botstate.json') as state_save:
-            jdata = json.load(state_save)
-            print(type(jdata["seven_days"]))
-            print(type(self.seven_days))
+        return None
 
-            print(datetime.timedelta(jdata["seven_days"]))
-            # print(datetime.datetime.strptime(jdata["end_of_relative_today"], '%m/%d/%Y %I:%M:%S %p'))
+    def __read_saved_state(self):
+
+        with open('StateSaves/botstate.json') as infile:
+            new_state = json.load(infile)
+
+            # Renters
+            self.renters = new_state["renters"]
+            self.renters_paid = new_state["renters_paid"]
+            self.renters_not_paid = new_state["renters_not_paid"]
+
+            # Rent reminder rel times
+            self.last_day_of_relative_month = self.__dict_str_to_datetime(new_state, "last_day_of_relative_month")
+            self.first_day_of_next_month = self.__dict_str_to_datetime(new_state, "first_day_of_next_month")
+
+            # Pings
+            self.seven_days_ping = new_state["seven_days_ping"]
+            self.four_days_ping = new_state["four_days_ping"]
+            self.one_days_ping = new_state["one_days_ping"]
+            self.nine_day_of_ping = new_state["nine_day_of_ping"]
+            self.twelve_day_of_ping = new_state["twelve_day_of_ping"]
+            self.five_day_of_ping = new_state["five_day_of_ping"]
+            self.ten_day_of_ping = new_state["ten_day_of_ping"]
+
+            # Emergency info
+            self.relative_today = self.__dict_str_to_datetime(new_state, "relative_today")
+            self.end_of_relative_today = self.__dict_str_to_datetime(new_state, "end_of_relative_today")
+            self.relative_today_nine_am = self.__dict_str_to_datetime(new_state, "relative_today_nine_am")
+            self.relative_today_twelve_pm = self.__dict_str_to_datetime(new_state, "relative_today_twelve_pm")
+            self.relative_today_five_pm = self.__dict_str_to_datetime(new_state, "relative_today_five_pm")
+            self.relative_today_ten_pm = self.__dict_str_to_datetime(new_state, "relative_today_ten_pm")
+
+            # Pings
+            self.relative_today_nine_am_ping = new_state["relative_today_nine_am_ping"]
+            self.relative_today_twelve_pm_ping = new_state["relative_today_twelve_pm_ping"]
+            self.relative_today_five_pm_ping = new_state["relative_today_five_pm_ping"]
+            self.relative_today_ten_pm_ping = new_state["relative_today_ten_pm_ping"]
+
+    def __dict_str_to_datetime(self, a_dict, key):
+        return dateutil.parser.parse(a_dict[key])
+        # return datetime.datetime.strptime(a_dict[key], '%Y-%m-%d %H:%M%S')
 
     def __check_to_send_message(self, current_datetime, channels):
         """ Check if ping within the set window and check if it has pinged already for the window. Send message otherwise.
@@ -451,17 +507,6 @@ class LilMoHouseBot:
         self.last_day_of_relative_month = datetime.datetime(year=relative_day.year, month=relative_day.month,
                                                             day=last_day_of_month_int)
 
-        # Set relative datetime checks
-        self.seven_days = datetime.timedelta(days=6, hours=7)  # 5 oclock seven days
-        self.four_days = datetime.timedelta(days=3, hours=7)  # 5 oclock three days
-
-        self.seven_hours = datetime.timedelta(hours=7)
-
-        self.nine_hours = datetime.timedelta(hours=9)
-        self.twelve_hours = datetime.timedelta(hours=12)  # 12pm oclock
-        self.seventeen_hours = datetime.timedelta(hours=17)  # 5pm oclock
-        self.twenty_two_hours = datetime.timedelta(hours=22)  # 10pm oclock
-
         # One Day
         one_day = datetime.timedelta(days=1)
 
@@ -496,7 +541,7 @@ class LilMoHouseBot:
 
         # relative times
         self.relative_today = datetime.datetime.today()
-        self.end_of_relative_today = self.relative_today.replace(hour=23, minute=59, second=59, microsecond=999999, )
+        self.end_of_relative_today = self.relative_today.replace(hour=23, minute=59, second=59,)
 
         # relative times for pings
         self.relative_today_nine_am = self.relative_today.replace(hour=9, minute=0, second=0, microsecond=0, )
@@ -570,12 +615,20 @@ class LilMoHouseBot:
     def __cmd_show_renters_paid(self):
         return list(self.renters_paid.values())
 
+    def __cmd_shutdown(self):
+
+        print("Shutting Down")
+        self.save_state()
+        print("State Saved")
+        self.bot_run = False
+        return "State saved, shutting down!"
+
     def run(self):
         if self.slack_client.rtm_connect(with_team_state=False):
             print("Starter Bot connected and running!")
             # Read bot's user ID by calling Web API method `auth.test`
             self.starterbot_id = self.slack_client.api_call("auth.test")["user_id"]
-            while True:
+            while self.bot_run:
                 try:
                     command, channel, user = self.parse_bot_commands(self.slack_client.rtm_read())
                     if command:
@@ -594,8 +647,8 @@ class LilMoHouseBot:
 
 
 if __name__ == "__main__":
-    bot = LilMoHouseBot()
-    bot.save_state()
+    bot = LilMoHouseBot(saved_state=True)
+    bot.run()
 
 
 
