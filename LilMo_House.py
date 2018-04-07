@@ -7,17 +7,19 @@ import re
 from slackclient import SlackClient
 import json
 import calendar
+from bs4 import BeautifulSoup
+from selenium import webdriver
 
 
 class LilMoHouseBot:
 
-    def __init__(self,):
+    def __init__(self, saved_state=False):
 
-        # TODO: 1. Create a time tracking object that takes in rent due date and calculates all the needed relative times to interface with the Bot object class.
-        # TODO: 2. Save state when using shutdown cmd and allow to open last state when starting up.
-        # TODO: 3. Scrape web for chores/parking spot each monday/and with call cmd.
-        # TODO: 4. Track stats on how pays rent the fasts with a rent_stats cmd.
-        # TODO: 5. Allow for a list of Admins.
+        # TODO: 5. Create a time tracking object that takes in rent due date and calculates all the needed relative times to interface with the Bot object class.
+        # TODO: 3. Save state when using shutdown cmd and allow to open last state when starting up.
+        # TODO: 1. Scrape web for chores/parking spot each monday/and with call cmd.
+        # TODO: 2. Track stats on who pays rent the fastest with a rent_stats cmd.
+        # TODO: 4. Allow for a list of Admins.
         # TODO: 6. Use onion style architecture to allow cmds to be imported via driver. Would need big overhaul...
 
         # Open config and grab the json file
@@ -34,6 +36,12 @@ class LilMoHouseBot:
         # Grab the channel admin
         self.bot_admin = data["admin"]
 
+        # Grab sel driver location
+        self.sel_driver_path = data["seldriver"]
+
+        # Grab people names
+        self.usernames = data["usernames"]
+
         # starterbot's user ID in Slack: value is assigned after the bot starts up
         self.starterbot_id = None
 
@@ -45,6 +53,7 @@ class LilMoHouseBot:
         # Set all our relative times and ping flags for this month
         self.__reset_relative_times_and_pings()
         self.__reset_emergency_times_and_pings()
+        self.__reset_chore_pings()
 
         # constants
         self.rtm_read_delay = 1 # 1 second delay between reading from RTM
@@ -108,9 +117,13 @@ class LilMoHouseBot:
 
         if command.startswith(self.command_keyword + ' show_paid'):
             response = self.__cmd_show_renters_paid()
+            if not response:
+                response = 'No one has paid!'
 
         if command.startswith(self.command_keyword + ' show_not_paid'):
             response = self.__cmd_show_renters_not_paid()
+            if not response:
+                response = 'Everyone has paid!'
 
         if command == self.help_keyword:
             response = f"Here's a list of commands {self.command_list}"
@@ -121,6 +134,18 @@ class LilMoHouseBot:
             channel=channel,
             text=response or default_response
         )
+
+    def chores_reminder(self, channels,):
+
+        # If today is monday and we haven't pinged about chores, then ping about chores
+        if datetime.date.today().isoweekday() == 1 and not self.chore_ping:
+            self.__send_chores_reminder(channels)
+
+        # If we've sent out a ping and it isn't monday, reset the ping
+        if datetime.date.today().isoweekday() != 1 and self.chore_ping:
+            self.__reset_chore_pings()
+
+        return None
 
     def rent_reminder(self, channel,):
         """ Handles rent reminders for each month. Reminds once a week before rent due (end of the month),
@@ -140,6 +165,7 @@ class LilMoHouseBot:
         # If everyone has paid and we're in a new month, reset all our relative vars and renters not paid.
         if not self.renters_not_paid and right_now > self.first_day_of_next_month:
             self.__reset_relative_times_and_pings()
+            self.__reset_emergency_times_and_pings()
 
         # Check if ping within the set window and check if it has pinged already for the window
         self.__check_to_send_message(right_now, channel)
@@ -156,6 +182,59 @@ class LilMoHouseBot:
 
         return None
 
+    def save_state(self):
+
+        state_dict = {
+
+            "renters": self.renters,
+            "renters_paid": self.renters_paid,
+            "renters_not_paid": self.renters_not_paid,
+            "last_day_of_relative_month": self.last_day_of_relative_month,
+            # Could probably remove below
+            "seven_days":  self.seven_days,
+            "four_days": self.four_days,
+            "seven_hours": self.seven_hours,
+            "nine_hours": self.nine_hours,
+            "twelve_hours": self.twelve_hours,
+            "seventeen_hours": self.seventeen_hours,
+            "twenty_two_hours": self.twenty_two_hours,
+            # Remove above
+            "first_day_of_next_month": self.first_day_of_next_month,
+            "seven_days_ping": self.seven_days_ping,
+            "four_days_ping": self.four_days_ping,
+            "one_days_ping": self.one_days_ping,
+            "nine_day_of_ping": self.nine_day_of_ping,
+            "twelve_day_of_ping": self.twelve_day_of_ping,
+            "five_day_of_ping": self.five_day_of_ping,
+            "ten_day_of_ping": self.ten_day_of_ping,
+
+            # Emergency info
+            "relative_today": self.relative_today,
+            "end_of_relative_today": self.end_of_relative_today,
+            "relative_today_nine_am": self.relative_today_nine_am,
+            "relative_today_twelve_pm": self.relative_today_twelve_pm,
+            "relative_today_five_pm": self.relative_today_five_pm,
+            "relative_today_ten_pm": self.relative_today_ten_pm,
+            "relative_today_nine_am_ping": self.relative_today_nine_am_ping,
+            "relative_today_twelve_pm_ping": self.relative_today_twelve_pm_ping,
+            "relative_today_five_pm_ping": self.relative_today_five_pm_ping,
+            "relative_today_ten_pm_ping":  self.relative_today_ten_pm_ping
+
+            # Could add in chore information below
+
+        }
+
+        with open('StateSaves/botstate.json', 'w') as outfile:
+            json.dump(state_dict, fp=outfile, indent=4, sort_keys=True, default=str)
+
+        with open('StateSaves/botstate.json') as state_save:
+            jdata = json.load(state_save)
+            print(type(jdata["seven_days"]))
+            print(type(self.seven_days))
+
+            print(datetime.timedelta(jdata["seven_days"]))
+            # print(datetime.datetime.strptime(jdata["end_of_relative_today"], '%m/%d/%Y %I:%M:%S %p'))
+
     def __check_to_send_message(self, current_datetime, channels):
         """ Check if ping within the set window and check if it has pinged already for the window. Send message otherwise.
 
@@ -170,43 +249,43 @@ class LilMoHouseBot:
         if right_now > (self.last_day_of_relative_month - self.seven_days) < (self.last_day_of_relative_month - self.four_days) and not self.seven_days_ping:
 
             message = 'Rent due in seven days!'
-            self.__send_reminder(channel_list=channels, reminder_message=message)
+            self.__send_rent_reminder(channel_list=channels, reminder_message=message)
             self.seven_days_ping = True
 
         # Four day window
         if right_now > (self.last_day_of_relative_month - self.four_days) < (self.last_day_of_relative_month - self.seven_hours) and not self.four_days_ping:
             message = 'Rent due in four days!'
-            self.__send_reminder(channel_list=channels, reminder_message=message)
+            self.__send_rent_reminder(channel_list=channels, reminder_message=message)
             self.four_days_ping = True
 
         # Day before window
         if right_now > (self.last_day_of_relative_month - self.seven_hours) < (self.last_day_of_relative_month + self.nine_hours) and not self.one_days_ping:
             message = 'Rent due tomorrow!'
-            self.__send_reminder(channel_list=channels, reminder_message=message)
+            self.__send_rent_reminder(channel_list=channels, reminder_message=message)
             self.one_days_ping = True
 
         # Day of 9am ping
         if right_now > (self.last_day_of_relative_month + self.nine_hours) < (self.last_day_of_relative_month + self.twelve_hours) and not self.nine_day_of_ping:
             message = 'Rent due today!'
-            self.__send_reminder(channel_list=channels, reminder_message=message)
+            self.__send_rent_reminder(channel_list=channels, reminder_message=message)
             self.nine_day_of_ping = True
 
         # Day of 12pm ping
         if right_now > (self.last_day_of_relative_month + self.twelve_hours) < (self.last_day_of_relative_month + self.seventeen_hours) and not self.twelve_day_of_ping:
             message = 'Rent due today plzzz!'
-            self.__send_reminder(channel_list=channels, reminder_message=message)
+            self.__send_rent_reminder(channel_list=channels, reminder_message=message)
             self.twelve_day_of_ping = True
 
         # Day of 5pm ping
         if right_now > (self.last_day_of_relative_month + self.seventeen_hours) < (self.last_day_of_relative_month + self.twenty_two_hours) and not self.five_day_of_ping:
             message = 'R3nt duee rn!'
-            self.__send_reminder(channel_list=channels, reminder_message=message)
+            self.__send_rent_reminder(channel_list=channels, reminder_message=message)
             self.five_day_of_ping = True
 
         # Day of 10pm ping
         if right_now > (self.last_day_of_relative_month + self.twenty_two_hours) and not self.ten_day_of_ping:
             message = 'Okay.. seriously pay rent!'
-            self.__send_reminder(channel_list=channels, reminder_message=message)
+            self.__send_rent_reminder(channel_list=channels, reminder_message=message)
             self.ten_day_of_ping = True
 
         return None
@@ -217,25 +296,25 @@ class LilMoHouseBot:
 
         if right_now.hour > self.relative_today_nine_am and not self.relative_today_nine_am_ping:
             message = 'Rent is pass due, please pay!'
-            self.__send_reminder(channel_list=channels, reminder_message=message)
+            self.__send_rent_reminder(channel_list=channels, reminder_message=message)
             self.relative_today_nine_am_ping = True
 
         if right_now.hour > self.relative_today_twelve_pm and not self.relative_today_twelve_pm_ping:
             message = 'Rent is pass due, please pay!'
-            self.__send_reminder(channel_list=channels, reminder_message=message)
+            self.__send_rent_reminder(channel_list=channels, reminder_message=message)
             self.relative_today_twelve_pm_ping = True
 
         if right_now.hour > self.relative_today_five_pm and not self.relative_today_five_pm_ping:
             message = 'Rent is pass due, please pay!'
-            self.__send_reminder(channel_list=channels, reminder_message=message)
+            self.__send_rent_reminder(channel_list=channels, reminder_message=message)
             self.relative_today_nine_am_ping = True
 
         if right_now.hour > self.relative_today_ten_pm and not self.relative_today_ten_pm_ping:
             message = 'Rent is pass due, please pay!'
-            self.__send_reminder(channel_list=channels, reminder_message=message)
+            self.__send_rent_reminder(channel_list=channels, reminder_message=message)
             self.relative_today_ten_pm_ping = True
 
-    def __send_reminder(self, channel_list, reminder_message):
+    def __send_rent_reminder(self, channel_list, reminder_message):
         """ Check renters_not_paid. Send one message @ing all users in that dictionary
 
         :param channel_list: Channel list to send reminder to.
@@ -264,6 +343,105 @@ class LilMoHouseBot:
 
         print(f'Reminder sent: {users_with_reminder_message}')
         return None
+
+    def __send_chores_reminder(self, channels):
+
+        # Start the WebDriver and load the page
+        wd = webdriver.Firefox(executable_path=self.sel_driver_path)
+        wd.get("http://www.chorechart.xyz/")
+
+        # Let's wait for this shit to show up
+        time.sleep(5)
+
+        # And grab the page HTML source
+        html_page = wd.page_source
+        wd.quit()
+
+        # Now you can use html_page as you like
+        soup = BeautifulSoup(html_page, "lxml")
+
+        list_of_chore_doers = []
+
+        # print(soup.prettify())
+        for heading in soup.find_all('h3'):
+            list_of_chore_doers.append(heading.text)
+
+        dict_of_users = self.usernames
+
+        # Loop over scraped users, get users names from dictonary to assemble @. Add chore name in front
+        # and create single string.
+
+        # Cleaning the scrapped data
+        clean_list_of_chore_doers = []
+
+        for scraped_people in list_of_chore_doers:
+            clean_list_of_chore_doers.append(scraped_people.replace(' ', ''))
+
+        clean_surfaces = clean_list_of_chore_doers[0]
+        swipe_clean_floors = clean_list_of_chore_doers[1]
+        trash_and_recycle = clean_list_of_chore_doers[2]
+        clean_bathroom = clean_list_of_chore_doers[3]
+        parking_spot = clean_list_of_chore_doers[4]
+
+        clean_surfaces_cleaned = clean_surfaces.split("&")
+        swipe_clean_floors_cleaned = swipe_clean_floors.split("&")
+        trash_and_recycle_cleaned = trash_and_recycle.split("&")
+        clean_bathroom_cleaned = clean_bathroom.split("&")
+        parking_spot_cleaned = parking_spot.split("&")
+
+        # Let's assemble the needed strings
+        clean_surfaces_string = ''
+
+        for users in clean_surfaces_cleaned:
+            userid = dict_of_users.get(users)
+            clean_surfaces_string += '<@' + userid + '> '
+
+        clean_surfaces_string = '\nClean surfaces: ' + clean_surfaces_string
+
+        swipe_clean_floors_string = ''
+
+        for users in swipe_clean_floors_cleaned:
+            userid = dict_of_users.get(users)
+            swipe_clean_floors_string += '<@' + userid + '> '
+
+        swipe_clean_floors_string = '\nClean floors: ' + swipe_clean_floors_string
+
+        trash_and_recycle_string = ''
+
+        for users in trash_and_recycle_cleaned:
+            userid = dict_of_users.get(users)
+            trash_and_recycle_string += '<@' + userid + '> '
+
+        trash_and_recycle_string = '\nTrash and recycle: ' + trash_and_recycle_string
+
+        clean_bathroom_string = ''
+
+        for users in clean_bathroom_cleaned:
+            userid = dict_of_users.get(users)
+            clean_bathroom_string += '<@' + userid + '> '
+
+        clean_bathroom_string = '\nClean bathroom: ' + clean_bathroom_string
+
+        parking_spot_string = ''
+
+        for users in parking_spot_cleaned:
+            userid = dict_of_users.get(users)
+            parking_spot_string += '<@' + userid + '> '
+
+        parking_spot_string = '\nParking spot: ' + parking_spot_string
+
+        chore_string = clean_surfaces_string + swipe_clean_floors_string + trash_and_recycle_string + clean_bathroom_string + parking_spot_string
+
+        # Post to channels
+        for channel in channels:
+
+            self.slack_client.api_call(
+                "chat.postMessage",
+                channel=channel,
+                text=chore_string
+            )
+
+        self.chore_ping = True
 
     def __reset_relative_times_and_pings(self):
         # Get last day of the month from today's date.
@@ -302,6 +480,7 @@ class LilMoHouseBot:
         # Reset renters not paid
         self.__reset_renters_not_paid()
 
+        print('Normal Pings and rel. times reset')
         return None
 
     def __reset_renters_not_paid(self):
@@ -331,8 +510,11 @@ class LilMoHouseBot:
         self.relative_today_five_pm_ping = False
         self.relative_today_ten_pm_ping = False
 
-        print('emergency Pings reset')
+        print('Emergency Pings reset')
         return None
+
+    def __reset_chore_pings(self):
+        self.chore_ping = False
 
     def __check_if_admin(self, user):
         if user == self.bot_admin:
@@ -394,20 +576,26 @@ class LilMoHouseBot:
             # Read bot's user ID by calling Web API method `auth.test`
             self.starterbot_id = self.slack_client.api_call("auth.test")["user_id"]
             while True:
-                command, channel, user = self.parse_bot_commands(self.slack_client.rtm_read())
-                if command:
-                    self.handle_command(command, channel, user)
+                try:
+                    command, channel, user = self.parse_bot_commands(self.slack_client.rtm_read())
+                    if command:
+                        self.handle_command(command, channel, user)
                     self.rent_reminder(self.list_of_channels)
-                    print(channel)
-                # self.rent_reminder()
-                print('loop complete')
-                time.sleep(self.rtm_read_delay)
+                    self.chores_reminder(self.list_of_channels)
+                except ConnectionResetError:
+                    print('ConnectionResetError : Retrying connection')
+                    self.slack_client.rtm_connect(with_team_state=False)
+                finally:
+                    log_time = datetime.datetime.now()
+                    print('Log Time: ', log_time.day, log_time.hour, log_time.minute, log_time.second)
+                    time.sleep(self.rtm_read_delay)
         else:
             print("Connection failed. Exception traceback printed above.")
 
 
 if __name__ == "__main__":
     bot = LilMoHouseBot()
-    bot.run()
+    bot.save_state()
+
 
 
