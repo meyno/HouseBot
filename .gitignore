@@ -1,6 +1,7 @@
 # Project Specific
 config.json
-/botstate.json
+.StateSaves/
+.StateSaves/botstate.json
 
 # Pycharm
 .idea/
