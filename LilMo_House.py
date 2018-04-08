@@ -17,7 +17,7 @@ class LilMoHouseBot:
 
         # TODO: 5. Create a time tracking object that takes in rent due date and calculates all the needed relative times to interface with the Bot object class.
         # TODO: 3. Save state when using shutdown cmd and allow to open last state when starting up.
-        # TODO: 1. Scrape web for chores/parking spot each monday/and with call cmd.
+        #  TODO: 1. Scrape web for chores/parking spot each monday/and with call cmd.
         # TODO: 2. Track stats on who pays rent the fastest with a rent_stats cmd.
         # TODO: 4. Allow for a list of Admins.
         # TODO: 6. Use onion style architecture to allow cmds to be imported via driver. Would need big overhaul...
