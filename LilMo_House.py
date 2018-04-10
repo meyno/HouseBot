@@ -168,10 +168,12 @@ class LilMoHouseBot:
 
         # If today is monday and we haven't pinged about chores, then ping about chores
         if datetime.date.today().isoweekday() == 1 and not self.chore_ping:
+            print('Log: Sending chores reminder')
             self.__send_chores_reminder(channels)
 
         # If we've sent out a ping and it isn't monday, reset the ping
         if datetime.date.today().isoweekday() != 1 and self.chore_ping:
+            print('Log: Resetting chores reminder')
             self.__reset_chore_pings()
 
         return None
@@ -193,6 +195,7 @@ class LilMoHouseBot:
 
         # If everyone has paid and we're in a new month, reset all our relative vars and renters not paid.
         if not self.renters_not_paid and right_now > self.first_day_of_next_month:
+            print('Log: Resetting rent reminder')
             self.__reset_relative_times_and_pings()
             self.__reset_emergency_times_and_pings()
 
@@ -303,43 +306,49 @@ class LilMoHouseBot:
 
         # Seven day window
         if right_now > (self.last_day_of_relative_month - self.seven_days) < (self.last_day_of_relative_month - self.four_days) and not self.seven_days_ping:
-
+            print('Log: sending rent reminder')
             message = 'Rent due in seven days!'
             self.__send_rent_reminder(channel_list=channels, reminder_message=message)
             self.seven_days_ping = True
 
         # Four day window
         if right_now > (self.last_day_of_relative_month - self.four_days) < (self.last_day_of_relative_month - self.seven_hours) and not self.four_days_ping:
+            print('Log: sending rent reminder')
             message = 'Rent due in four days!'
             self.__send_rent_reminder(channel_list=channels, reminder_message=message)
             self.four_days_ping = True
 
         # Day before window
         if right_now > (self.last_day_of_relative_month - self.seven_hours) < (self.last_day_of_relative_month + self.nine_hours) and not self.one_days_ping:
+            print('Log: sending rent reminder')
             message = 'Rent due tomorrow!'
             self.__send_rent_reminder(channel_list=channels, reminder_message=message)
             self.one_days_ping = True
 
         # Day of 9am ping
         if right_now > (self.last_day_of_relative_month + self.nine_hours) < (self.last_day_of_relative_month + self.twelve_hours) and not self.nine_day_of_ping:
+            print('Log: sending rent reminder')
             message = 'Rent due today!'
             self.__send_rent_reminder(channel_list=channels, reminder_message=message)
             self.nine_day_of_ping = True
 
         # Day of 12pm ping
         if right_now > (self.last_day_of_relative_month + self.twelve_hours) < (self.last_day_of_relative_month + self.seventeen_hours) and not self.twelve_day_of_ping:
+            print('Log: sending rent reminder')
             message = 'Rent due today plzzz!'
             self.__send_rent_reminder(channel_list=channels, reminder_message=message)
             self.twelve_day_of_ping = True
 
         # Day of 5pm ping
         if right_now > (self.last_day_of_relative_month + self.seventeen_hours) < (self.last_day_of_relative_month + self.twenty_two_hours) and not self.five_day_of_ping:
+            print('Log: sending rent reminder')
             message = 'R3nt duee rn!'
             self.__send_rent_reminder(channel_list=channels, reminder_message=message)
             self.five_day_of_ping = True
 
         # Day of 10pm ping
         if right_now > (self.last_day_of_relative_month + self.twenty_two_hours) and not self.ten_day_of_ping:
+            print('Log: sending rent reminder')
             message = 'Okay.. seriously pay rent!'
             self.__send_rent_reminder(channel_list=channels, reminder_message=message)
             self.ten_day_of_ping = True
@@ -617,29 +626,56 @@ class LilMoHouseBot:
 
     def __cmd_shutdown(self):
 
-        print("Shutting Down")
+        print("Log: Shutting Down")
         self.save_state()
-        print("State Saved")
+        print("Log: State Saved")
         self.bot_run = False
-        return "State saved, shutting down!"
+        return "Log: State saved, shutting down!"
 
     def run(self):
         if self.slack_client.rtm_connect(with_team_state=False):
             print("Starter Bot connected and running!")
+
             # Read bot's user ID by calling Web API method `auth.test`
             self.starterbot_id = self.slack_client.api_call("auth.test")["user_id"]
             while self.bot_run:
+
+                log_time = datetime.datetime.now()
                 try:
                     command, channel, user = self.parse_bot_commands(self.slack_client.rtm_read())
                     if command:
                         self.handle_command(command, channel, user)
                     self.rent_reminder(self.list_of_channels)
                     self.chores_reminder(self.list_of_channels)
-                except ConnectionResetError:
-                    print('ConnectionResetError : Retrying connection')
-                    self.slack_client.rtm_connect(with_team_state=False)
+
+                # Catching Connection Reset Error
+                except ConnectionResetError as e:
+                    print('Log: ConnectionResetError : Retrying connection')
+                    print(f'Log: {e}')
+
+                    # Log the error to a txt file
+                    with open('ConErrorLog.txt', 'a') as log_file:
+                        log_file.write(f'\nLog Time: {log_time.day}, {log_time.hour}, '
+                                       f'{log_time.minute}, {log_time.second}'
+                                       '\nLog: ConnectionResetError : Retrying connection'
+                                       f'\nLog: {e}')
+
+                    # Catching anything while trying to reconnect
+                    try:
+                        print('Log: reconnecting')
+                        self.slack_client.rtm_connect(with_team_state=False)
+
+                    # Printing any error caught
+                    except e:
+                        print(f'Log: reconnection error: {e}')
+
+                        # Log the error to a txt file
+                        with open('AfterReConErrorLog.txt', 'a') as log_file:
+                            log_file.write(f'\nLog Time: {log_time.day}, {log_time.hour}, '
+                                           f'{log_time.minute}, {log_time.second}'
+                                           f'\nLog: reconnection error: {e}')
+
                 finally:
-                    log_time = datetime.datetime.now()
                     print('Log Time: ', log_time.day, log_time.hour, log_time.minute, log_time.second)
                     time.sleep(self.rtm_read_delay)
         else:
